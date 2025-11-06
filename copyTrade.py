@@ -35,7 +35,7 @@ async def copy_trade():
 				# time.sleep(POLL_INTERVAL)
 				await asyncio.sleep(POLL_INTERVAL)
 				continue
-
+			await send_telegram_message("Found new fill")
 			target_wallet.update_user_state()
 			# target_wallet.update_positions()
 			
@@ -45,19 +45,23 @@ async def copy_trade():
 				percentage_asset, leverage_value, entry_price = target_wallet.get_position_info(fill['coin'])
 
 				user_margin = percentage_asset * my_wallet.asset
-				user_order_sz = (user_margin * leverage_value) / entry_price
+				user_order_sz = round((user_margin * leverage_value) / entry_price, 5)
 				is_buy = True if fill['side'] == 'B' else False
-
+				print("calculation completed")
 				exchange.update_leverage(leverage_value, fill['coin'], is_cross=IS_CROSS)
-				order_result = exchange.market_open(fill['coin'], is_buy, user_order_sz, None, 0.01)
-				
+				print("updated leverage")
+				if my_wallet.mode:
+					order_result = exchange.market_open(fill['coin'], is_buy, user_order_sz, None, 0.01)
+				else:
+					order_result = exchange.market_open(fill['coin'], is_buy, 0, None, 0.01)
+				print("sent order")
 				message = ""
 				if order_result['status'] == 'ok':
 					message += f"Market Order: {fill['coin']}\n"
 					position = 'Long' if is_buy else 'Short'
 					message += f"Position: {position}\n"
 					message += f"Size: {user_order_sz}\n"
-					message += order_result['response']
+					message += str(order_result['response'])
 				else:
 					message += f"Market order failed with {fill['coin']}, size {user_order_sz}, position {position}"
 				await send_telegram_message(message)
@@ -71,14 +75,14 @@ async def copy_trade():
 				is_buy = True if order['side'] == 'B' else False
 				order_type = {'trigger': {'isMarket': False, 'triggerPx':order['triggerPx'], 'tpsl': 'sl' if order['orderType'] == 'Stop Limit' else 'tp'}}
 				order_result = exchange.order(order['coin'], is_buy, my_wallet.positions[order['coin']], order['limitPx'], order_type, order['reduceOnly'])
-				
+				print("order sent")
 				message = ""
 				if order_result['status'] == 'ok':
 					message += f"Order: {fill['coin']}"
 					position = 'Long' if is_buy else 'Short'
 					message += f"Position: {position}"
 					message += f"Size: {user_order_sz}"
-					message += order_result['response']
+					message += str(order_result['response'])
 				else:
 					message += f"Order failed with {fill['coin']}, size {user_order_sz}, position {position}"
 				await send_telegram_message(message)

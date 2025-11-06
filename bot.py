@@ -94,7 +94,6 @@ async def get_my_balance_handle(update: Update, context: ContextTypes.DEFAULT_TY
 	await msg.reply_text(my_wallet.asset)
 
 async def get_my_positions_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	print(target_wallet.positions)
 	msg = update.callback_query.message if update.callback_query else update.message
 	await msg.reply_text(my_wallet.positions)
 
@@ -103,7 +102,6 @@ async def get_target_positions_handle(update: Update, context: ContextTypes.DEFA
 	await msg.reply_text(target_wallet.positions)
 
 async def set_target_address_handle(update: Update, context: CallbackContext, value=None):
-	print("in set target")
 	if value is None:        
 		msg = update.callback_query.message if update.callback_query else update.message
 		await msg.reply_text("Please reply with the target address")
@@ -120,18 +118,36 @@ async def set_target_address_handle(update: Update, context: CallbackContext, va
 		msg = update.callback_query.message if update.callback_query else update.message
 		await msg.reply_text("Invalid value. Usage: Reply with a number (e.g., 0.6)")
 
+async def switch_on_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, value=True):
+	await set_trade_mode(update, value)
+
+async def switch_off_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, value=False):
+	await set_trade_mode(update, value)
+
+async def set_trade_mode(update, value=None):
+	mod = "ON" if value else "OFF"
+	try:
+		my_wallet.set_mode(value)
+		message = f"Trade mode is {mod}"
+		msg = update.callback_query.message if update.callback_query else update.message
+		await msg.reply_text(message)
+	except ValueError:
+		msg = update.callback_query.message if update.callback_query else update.message
+		await msg.reply_text(f"Failed to switch {mod} trade mode")
+
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	print("callback handler")
 	query = update.callback_query
 	await query.answer()
 	command = query.data
 
 	command_map = {
 		"help": help_handle,
-		"set_target_address": set_target_address_handle,
 		"get_my_balance": get_my_balance_handle,
 		"get_my_positions": get_my_positions_handle,
 		"get_target_positions": get_target_positions_handle,
+		"set_target_address": set_target_address_handle,
+		"switch_on": switch_on_handle,
+		"switch_off": switch_off_handle,
 	}
 
 	if command in command_map:
@@ -152,7 +168,9 @@ def add_all_handlers():
 	application.add_handler(CommandHandler("get_my_balance", get_my_balance_handle))
 	application.add_handler(CommandHandler("get_my_positions", get_my_positions_handle))
 	application.add_handler(CommandHandler("get_target_positions", get_target_positions_handle))
-	application.add_handler(CommandHandler("set_target_address", set_target_address_handle))  
+	application.add_handler(CommandHandler("set_target_address", set_target_address_handle))
+	application.add_handler(CommandHandler("switch_on", switch_on_handle))
+	application.add_handler(CommandHandler("switch_off", switch_off_handle))  
 	# application.add_handler(CommandHandler("send_msg", send_msg_handle)) 
 	application.add_handler(CallbackQueryHandler(callback_query_handler))
 	application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

@@ -17,6 +17,7 @@ class Wallet:
 		self.address = address
 		self.positions: Dict[str, float] = {}
 		self._lock = threading.Lock()
+		self.mode = True
 
 		self.update_user_state()
 		self.update_positions()
@@ -26,6 +27,10 @@ class Wallet:
 			self.address = address
 		self.update_user_state()
 		self.update_positions()
+
+	def set_mode(self, mode):
+		with self._lock:
+			self.mode = mode
 
 	def update_user_state(self):
 		with self._lock:
