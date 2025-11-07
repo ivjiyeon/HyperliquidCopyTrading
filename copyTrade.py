@@ -2,16 +2,16 @@ import os
 import time
 import asyncio
 import threading
+from bot import send_telegram_message, start_bot
 from wallet import my_wallet, target_wallet
 from typing import Dict, Any, List
+from notion import log_to_database
+from dotenv import load_dotenv
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
-
-from bot import send_telegram_message, start_bot
-from dotenv import load_dotenv
 
 load_dotenv()
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
@@ -27,7 +27,6 @@ async def copy_trade():
 	await start_bot()
 
 	while True:
-		# print('start trading')
 		try:
 			# Fetch new fills since last_timestamp
 			new_fills: List[Dict] = target_wallet.get_filled_history(last_timestamp)
@@ -35,12 +34,13 @@ async def copy_trade():
 				# time.sleep(POLL_INTERVAL)
 				await asyncio.sleep(POLL_INTERVAL)
 				continue
-			await send_telegram_message("Found new fill")
 			target_wallet.update_user_state()
 			# target_wallet.update_positions()
 			
 			for fill in new_fills:
 				if 'Close' in fill['dir'] and fill['coin'] not in my_wallet.positions.keys():
+					await send_telegram_message(f"Target wallet {fill['dir']} {fill['coin']} position")
+					last_timestamp = max(f['time'] for f in new_fills)
 					continue
 				percentage_asset, leverage_value, entry_price = target_wallet.get_position_info(fill['coin'])
 
@@ -60,39 +60,54 @@ async def copy_trade():
 					message += f"Market Order: {fill['coin']}\n"
 					position = 'Long' if is_buy else 'Short'
 					message += f"Position: {position}\n"
+					message += f"Leverage: {leverage_value}X\n"
 					message += f"Size: {user_order_sz}\n"
+					message += f"Price: {entry_price}"
 					message += str(order_result['response'])
 				else:
 					message += f"Market order failed with {fill['coin']}, size {user_order_sz}, position {position}"
 				await send_telegram_message(message)
 				print(message)
-			my_wallet.update_user_state()
 
-			new_orders: List[Dict] = target_wallet.get_historical_orders(last_timestamp)
-			for order in new_orders:
-				if order['coin'] not in my_wallet.positions.keys():
-					continue
-				is_buy = True if order['side'] == 'B' else False
-				order_type = {'trigger': {'isMarket': False, 'triggerPx':order['triggerPx'], 'tpsl': 'sl' if order['orderType'] == 'Stop Limit' else 'tp'}}
-				order_result = exchange.order(order['coin'], is_buy, my_wallet.positions[order['coin']], order['limitPx'], order_type, order['reduceOnly'])
-				print("order sent")
-				message = ""
-				if order_result['status'] == 'ok':
-					message += f"Order: {fill['coin']}"
-					position = 'Long' if is_buy else 'Short'
-					message += f"Position: {position}"
-					message += f"Size: {user_order_sz}"
-					message += str(order_result['response'])
-				else:
-					message += f"Order failed with {fill['coin']}, size {user_order_sz}, position {position}"
-				await send_telegram_message(message)
-				print(message)
+			# Log to Notion
+			my_wallet.update_user_state()
+			my_fills = my_wallet.get_filled_history(last_timestamp)
+			for fill in my_fills:
+				coin = fill['coin']
+				dir = 'Long' if fill['side'] == 'B' else 'Short'
+				price = fill['px']
+				pnl = float(fill['closedPnl'])
+				fee = float(fill['fee'])
+				log_to_database(coin, dir, price, pnl, fee)
+
+
+			# new_orders: List[Dict] = target_wallet.get_historical_orders(last_timestamp)
+			# for order in new_orders:
+			# 	if order['coin'] not in my_wallet.positions.keys():
+			# 		continue
+			# 	is_buy = True if order['side'] == 'B' else False
+			# 	order_type = {'trigger': {'isMarket': False, 'triggerPx':order['triggerPx'], 'tpsl': 'sl' if order['orderType'] == 'Stop Limit' else 'tp'}}
+			# 	order_result = exchange.order(order['coin'], is_buy, my_wallet.positions[order['coin']], order['limitPx'], order_type, order['reduceOnly'])
+			# 	print("order sent")
+			# 	message = ""
+			# 	if order_result['status'] == 'ok':
+			# 		message += f"Order: {fill['coin']}"
+			# 		position = 'Long' if is_buy else 'Short'
+			# 		message += f"Position: {position}"
+			# 		message += f"Leverage: {leverage_value}X\n"
+			# 		message += f"Size: {user_order_sz}"
+			# 		message += str(order_result['response'])
+			# 	else:
+			# 		message += f"Order failed with {fill['coin']}, size {user_order_sz}, position {position}"
+			# 	await send_telegram_message(message)
+			# 	print(message)
 
 			# Update last_timestamp
 			last_timestamp = max(f['time'] for f in new_fills)
 
 		except Exception as e:
 			print(f"Error in poll: {e}")
+			last_timestamp = max(f['time'] for f in new_fills)
 		
 		await asyncio.sleep(POLL_INTERVAL)
 		# time.sleep(POLL_INTERVAL)
