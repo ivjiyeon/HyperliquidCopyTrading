@@ -6,7 +6,7 @@ from notion_client import AsyncClient
 notion = AsyncClient(auth=os.getenv("NOTION_TOKEN"))
 database_id = os.getenv("DATABASE_ID")
 
-async def log_to_database(coin, dir, price, pnl, fee):
+async def log_to_database(coin, dir, price, size, pnl, percentage_pnl, fee, timestamp):
 	# new_page = 
 	await notion.pages.create(
 		parent={"database_id": database_id},
@@ -30,14 +30,26 @@ async def log_to_database(coin, dir, price, pnl, fee):
 					"name": dir
 				}				
 			},
-			"Price": {
+			"Price": {  # Number
 				"number": price
+			},
+			"Size": {  # Number
+				"number": size
+			},
+			"TradeValue": {  # Number
+				"number": price*size
 			},
 			"ClosedPNL": {  # Number
 				"number": pnl
 			},
+			"PercentagePNL": {  # Number
+				"number": percentage_pnl
+			},
 			"Fee": {  # Number
 				"number": fee
+			},
+			"Timestamp": {  # Number
+				"number": timestamp
 			}
 		}
 	)

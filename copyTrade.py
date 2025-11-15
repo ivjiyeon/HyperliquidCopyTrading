@@ -18,6 +18,21 @@ PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 POLL_INTERVAL = 2
 IS_CROSS = True
 
+async def send_message(order_result, coin, direction, size, price, leverage_value=0):
+	if order_result['status'] == 'ok':
+		message += f"Market Order: {coin}\n"
+		# position = 'Long' if is_buy else 'Short'
+		message += f"Direction: {direction}\n"
+		if leverage_value != 0:
+			message += f"Leverage: {leverage_value}X\n"
+		message += f"Size: {size}\n"
+		message += f"Price: {price}\n"
+		message += str(order_result['response'])
+	else:
+		message += f"Market order failed to {direction} {coin} position with size {size} on price {price}"
+	await send_telegram_message(message)
+	print(message)
+
 async def copy_trade():
 	last_timestamp = int(time.time()*1000)
 	account: LocalAccount = Account.from_key(PRIVATE_KEY)
@@ -25,7 +40,7 @@ async def copy_trade():
 	
 	# start telegram bot
 	await start_bot()
-
+	
 	while True:
 		try:
 			# Fetch new fills since last_timestamp
@@ -34,40 +49,50 @@ async def copy_trade():
 				# time.sleep(POLL_INTERVAL)
 				await asyncio.sleep(POLL_INTERVAL)
 				continue
+
+			print(f"timestamp: {last_timestamp}")
+			print(f"new_fills: \n {new_fills}")
+			# await send_telegram_message("found new fill")
 			target_wallet.update_user_state()
 			# target_wallet.update_positions()
 			
 			for fill in new_fills:
-				if 'Close' in fill['dir'] and fill['coin'] not in my_wallet.positions.keys():
-					await send_telegram_message(f"Target wallet {fill['dir']} {fill['coin']} position")
-					last_timestamp = max(f['time'] for f in new_fills)
+				print(f"fill: \n {fill}")
+				if "@" in fill['coin']:
+					print("Spot trading detected")					
 					continue
-				percentage_asset, leverage_value, entry_price = target_wallet.get_position_info(fill['coin'])
-
-				user_margin = percentage_asset * my_wallet.asset
-				user_order_sz = round((user_margin * leverage_value) / entry_price, 5)
-				is_buy = True if fill['side'] == 'B' else False
-				print("calculation completed")
-				exchange.update_leverage(leverage_value, fill['coin'], is_cross=IS_CROSS)
-				print("updated leverage")
-				if my_wallet.mode:
-					order_result = exchange.market_open(fill['coin'], is_buy, user_order_sz, None, 0.01)
-				else:
-					order_result = exchange.market_open(fill['coin'], is_buy, 0, None, 0.01)
-				print("sent order")
+				
 				message = ""
-				if order_result['status'] == 'ok':
-					message += f"Market Order: {fill['coin']}\n"
-					position = 'Long' if is_buy else 'Short'
-					message += f"Position: {position}\n"
-					message += f"Leverage: {leverage_value}X\n"
-					message += f"Size: {user_order_sz}\n"
-					message += f"Price: {entry_price}"
-					message += str(order_result['response'])
+				if 'Close' in fill['dir'] and fill['coin'] not in my_wallet.positions.keys():
+					message += f"Target wallet {fill['dir']} {fill['coin']} position"
+					await send_telegram_message(message)
+					print(message)
+					last_timestamp = fill['time'] + 1
+					continue
+				
+				elif 'Close' in fill['dir'] and fill['coin'] in my_wallet.positions.keys():
+					my_wallet.update_positions()
+					user_size = my_wallet.positions[fill['coin']]
+					is_buy = True if user_size < 0 else False
+					order_result = exchange.market_open(fill['coin'], is_buy, user_size, None, 0.01)
+					send_message(order_result, fill['coin'], fill['dir'], user_size, fill['px'])
+
 				else:
-					message += f"Market order failed with {fill['coin']}, size {user_order_sz}, position {position}"
-				await send_telegram_message(message)
-				print(message)
+					_, leverage_value, _ = target_wallet.get_position_info(fill['coin'])
+					percentage_size = float(fill['sz']) / target_wallet.asset
+					user_size = round(percentage_size * float(my_wallet.asset), 5)
+					is_buy = True if fill['side'] == 'B' else False
+					print(f"Target wallet used {percentage_size*100}% of asset")
+					exchange.update_leverage(leverage_value, fill['coin'], is_cross=IS_CROSS)
+					print(f"{leverage_value}X leverage set")
+
+					if my_wallet.mode:
+						order_result = exchange.market_open(fill['coin'], is_buy, user_size, None, 0.01)
+					else:
+						order_result = exchange.market_open(fill['coin'], is_buy, 0, None, 0.01)
+					print("Market order sent")				
+					
+					send_message(order_result, fill['coin'], fill['dir'], user_size, fill['px'], leverage_value)
 
 			# Log to Notion
 			my_wallet.update_user_state()
@@ -75,11 +100,19 @@ async def copy_trade():
 			for fill in my_fills:
 				coin = fill['coin']
 				dir = 'Long' if fill['side'] == 'B' else 'Short'
-				price = fill['px']
+				price = float(fill['px'])
+				size = float(fill['sz'])
 				pnl = float(fill['closedPnl'])
+				if "Open" not in fill['dir']:
+					_, leverage_value, _ = my_wallet.get_position_info(fill['coin'])
+					# percentage_pnl = (fill['px'] - entry_price) / entry_price * leverage_value if fill['side'] == 'B' else (entry_price - fill['px']) / entry_price * leverage_value
+					# fee calculation excluded
+					percentage_pnl =  pnl / (my_wallet.asset - pnl) * 100 * leverage_value
+				else:
+					percentage_pnl = 0
 				fee = float(fill['fee'])
-				log_to_database(coin, dir, price, pnl, fee)
-
+				timestamp = int(fill['time'])
+				await log_to_database(coin, dir, price, size, pnl, percentage_pnl, fee, timestamp)
 
 			# new_orders: List[Dict] = target_wallet.get_historical_orders(last_timestamp)
 			# for order in new_orders:
@@ -95,19 +128,20 @@ async def copy_trade():
 			# 		position = 'Long' if is_buy else 'Short'
 			# 		message += f"Position: {position}"
 			# 		message += f"Leverage: {leverage_value}X\n"
-			# 		message += f"Size: {user_order_sz}"
+			# 		message += f"Size: {user_size}"
 			# 		message += str(order_result['response'])
 			# 	else:
-			# 		message += f"Order failed with {fill['coin']}, size {user_order_sz}, position {position}"
+			# 		message += f"Order failed with {fill['coin']}, size {user_size}, position {position}"
 			# 	await send_telegram_message(message)
 			# 	print(message)
 
 			# Update last_timestamp
-			last_timestamp = max(f['time'] for f in new_fills)
+			last_timestamp = max(f['time'] for f in new_fills) + 1
 
 		except Exception as e:
 			print(f"Error in poll: {e}")
-			last_timestamp = max(f['time'] for f in new_fills)
+			await send_telegram_message("Error found. Terminating the program")
+			break
 		
 		await asyncio.sleep(POLL_INTERVAL)
 		# time.sleep(POLL_INTERVAL)

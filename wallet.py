@@ -44,7 +44,7 @@ class Wallet:
 			for pos in self.user_state.get('assetPositions', []):
 				coin = pos['position']['coin']
 				szi = float(pos['position']['szi'])
-				if abs(szi) > 0:
+				if szi > 0:
 					self.positions[coin] = szi
 		
 	def get_filled_history(self, start_time):
