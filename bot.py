@@ -19,8 +19,8 @@ from telegram.ext import (
 	AIORateLimiter,
 	filters
 )
-from telegram.constants import ParseMode, ChatAction
-from wallet import target_wallet, my_wallet
+# from telegram.constants import ParseMode, ChatAction
+from wallet import my_wallet, target_wallet
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -90,14 +90,17 @@ async def help_handle(update: Update, context: CallbackContext):
 	await msg.reply_text(HELP_MESSAGE, reply_markup=reply_markup)
 
 async def get_my_balance_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	my_wallet.update_user_state()
 	msg = update.callback_query.message if update.callback_query else update.message
 	await msg.reply_text(my_wallet.asset)
 
 async def get_my_positions_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	my_wallet.update_user_state()
 	msg = update.callback_query.message if update.callback_query else update.message
 	await msg.reply_text(my_wallet.positions)
 
 async def get_target_positions_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+	target_wallet.update_user_state()
 	msg = update.callback_query.message if update.callback_query else update.message
 	await msg.reply_text(target_wallet.positions)
 

@@ -3,12 +3,17 @@ import os
 import threading
 from typing import Dict
 from hyperliquid.info import Info
+from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
+from eth_account import Account
+from eth_account.signers.local import LocalAccount
 from dotenv import load_dotenv
 
 load_dotenv()
-WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
+WALLET_ADDRESS_L = os.getenv("WALLET_ADDRESS_L")
 TARGET_ADDRESS = os.getenv("TARGET_ADDRESS")
+PRIVATE_KEY_L = os.getenv("PRIVATE_KEY_L")
+IS_CROSS=True
 
 info = Info(constants.MAINNET_API_URL, skip_ws=False)
 
@@ -20,26 +25,17 @@ class Wallet:
 		self.mode = True
 
 		self.update_user_state()
-		self.update_positions()
 
 	def set_address(self, address):
 		with self._lock:
 			self.address = address
 		self.update_user_state()
-		self.update_positions()
-
-	def set_mode(self, mode):
-		with self._lock:
-			self.mode = mode
 
 	def update_user_state(self):
 		with self._lock:
 			self.user_state = info.user_state(self.address)
 			self.asset = float(self.user_state['marginSummary']['accountValue'])
 			self.asset_positions = self.user_state['assetPositions']
-
-	def update_positions(self):
-		with self._lock:
 			self.positions.clear()
 			for pos in self.user_state.get('assetPositions', []):
 				coin = pos['position']['coin']
@@ -63,7 +59,35 @@ class Wallet:
 			entry_price = float(position_info[0]['entryPx'])
 			return percentage_asset, leverage_value, entry_price
 	
-global target_wallet, my_wallet
+	
+class My_Wallet(Wallet):
+	def __init__(self, address, private_key):
+		super().__init__(address)
+		account: LocalAccount = Account.from_key(private_key)
+		self.exchange = Exchange(account, constants.MAINNET_API_URL)
+	
+	def update_leverage(self, coin, leverage_value):
+		self.exchange.update_leverage(leverage_value, coin, is_cross=IS_CROSS)
+		print(f"{leverage_value}X leverage set")
+
+	def send_market_order(self, coin, dir, size):
+		if self.mode:
+			order_result = self.exchange.market_open(coin, dir, size, None, 0.01)
+		else:
+			order_result = self.exchange.market_open(coin, dir, 0, None, 0.01)
+		print("Market order sent")
+		return order_result
+	
+	def set_mode(self, mode):
+		with self._lock:
+			self.mode = mode
+		
+# global target_wallet, my_wallet
 target_wallet = Wallet(TARGET_ADDRESS)
-my_wallet = Wallet(WALLET_ADDRESS)
+my_wallet = My_Wallet(WALLET_ADDRESS_L, PRIVATE_KEY_L)
+
+COPY_PAIRS=[
+	(my_wallet, target_wallet, "LONG")
+]
+
 print(my_wallet.address)
