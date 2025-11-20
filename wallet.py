@@ -1,16 +1,11 @@
 import time
-import os
 import threading
-import yaml
-from typing import Dict, List
+from typing import Dict
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
-from dotenv import load_dotenv
-
-load_dotenv()
 # WALLET_ADDRESS_L = os.getenv("WALLET_ADDRESS_L")
 # TARGET_ADDRESS = os.getenv("TARGET_ADDRESS")
 # PRIVATE_KEY_L = os.getenv("PRIVATE_KEY_L")
@@ -83,28 +78,7 @@ class My_Wallet(Wallet):
 		with self._lock:
 			self.mode = mode
 		
-def load_config() -> Dict[str, Any]:
-    try:
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        print("config.yaml not found! Create it using the example above.")
-        exit(1)
-    except Exception as e:
-        print(f"Error reading config.yaml: {e}")
-        exit(1)
 
-
-config = load_config()
-pairs = config.get("pairs")
-
-copy_pairs: Dict[List] = {}
-for pair in pairs:
-	private_key = os.getenv(pair['private_key'])
-	copy_pairs[pair['name']]= [
-		My_Wallet(pair['my_wallet'], private_key), 
-		Wallet(pair['target_wallet'])
-	]
 
 # # global target_wallet, my_wallet
 # target_wallet = Wallet(TARGET_ADDRESS)

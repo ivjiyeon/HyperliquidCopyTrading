@@ -5,6 +5,13 @@ pairs:
     target_wallet: "0xeb83e695adcac2e83f290d2d2815fc58e6491d7a"
   - name: "short"
     my_wallet: "0x18e8f449279db589c9B4E7cC51e7D090fCD38E74"
-    private_key: "PRIVATE_KEY_L"
-    target_wallet: "0xeb83e695adcac2e83f290d2d2815fc58e6491d7a"
+    private_key: "PRIVATE_KEY_S"
+    target_wallet: "0x418aa6bf98a2b2bc93779f810330d88cde488888" #"0x95f45c5e6bd5a932c9193d55fed1fd0428ff127f"
+
+notion:
+  - name: "long"
+    # token: "NOTION_TOKEN"
+    db_id: "DB_ID_L"
+  - name: "short"
+    db_id: "DB_ID_S"
 

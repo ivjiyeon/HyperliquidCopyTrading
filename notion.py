@@ -2,11 +2,10 @@ import os
 import datetime
 from notion_client import AsyncClient
 
-
 notion = AsyncClient(auth=os.getenv("NOTION_TOKEN"))
-database_id = os.getenv("DATABASE_ID")
+# database_id = os.getenv("DATABASE_ID")
 
-async def log_to_database(coin, dir, price, size, pnl, percentage_pnl, fee, timestamp):
+async def log_to_database(database_id, coin, dir, price, size, pnl, percentage_pnl, fee, timestamp):
 	# new_page = 
 	await notion.pages.create(
 		parent={"database_id": database_id},

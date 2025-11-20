@@ -1,5 +1,6 @@
 import os
 import asyncio
+import threading
 from telegram import (
 	Update,
 	User,
@@ -20,7 +21,6 @@ from telegram.ext import (
 	filters
 )
 # from telegram.constants import ParseMode, ChatAction
-from wallet import my_wallet, target_wallet
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,11 +35,9 @@ HELP_MESSAGE = """Commands:
 ⚪ /switch_off – End copy trading
 ⚪ /help – Show help
 """
-# /send_msg - Send Telegram Message
 
-application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-async def post_init(application: Application):
+async def post_init():
 	await application.bot.set_my_commands([
 		BotCommand("/get_my_balance", "Show my balance"),
 		BotCommand("/get_my_positions", "Show my positions"),
@@ -53,13 +51,25 @@ async def post_init(application: Application):
 
 async def send_telegram_message(message):
 	try:
-		await application.bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=message)
-		# print(f"Telegram message sent: {message}")
+		await asyncio.run_coroutine_threadsafe(
+			application.bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=message),
+			application.bot.loop
+		)
 	except Exception as e:
 		print(f"Error sending Telegram message: {e}")
 
-# async def send_msg_handle(update: Update, context: CallbackContext):
-# 	await send_telegram_message("Hi")
+async def get_pair(update: Update, context: ContextTypes.DEFAULT_TYPE, command):
+	buttons = []
+	for name in pairs_data.keys():
+		buttons.append([InlineKeyboardButton(name, callback_data=name)])
+
+	keyboard = InlineKeyboardMarkup(buttons)
+	msg = update.callback_query.message if update.callback_query else update.message
+	await msg.reply_text(
+		"Which wallet do you want to check?",
+		reply_markup=keyboard
+	)
+	context.user_data["command"] = command
 
 async def start_handle(update: Update, context: CallbackContext):
 	# await register_user_if_not_exists(update, context, update.message.from_user)
@@ -73,47 +83,60 @@ async def start_handle(update: Update, context: CallbackContext):
 async def help_handle(update: Update, context: CallbackContext):
 	keyboard = [
 		[
-			InlineKeyboardButton("switchOn", callback_data="switch_on"),
-			InlineKeyboardButton("switchOff", callback_data="switch_off"),
+			InlineKeyboardButton("SwitchOn", callback_data="switch_on"),
+			InlineKeyboardButton("SwitchOff", callback_data="switch_off"),
 		],
 		[
 			InlineKeyboardButton("GetMyPositions", callback_data="get_my_positions"),
 			InlineKeyboardButton("GetTargetPositions", callback_data="get_target_positions"),
 		],
 		[
-			InlineKeyboardButton("setTargetAddress", callback_data="set_target_address"),
-			
+			InlineKeyboardButton("GetMyBalance", callback_data="get_my_balance"),
+			InlineKeyboardButton("SetTargetAddress", callback_data="set_target_address"),			
 		],
 	]
 	reply_markup = InlineKeyboardMarkup(keyboard)
 	msg = update.callback_query.message if update.callback_query else update.message
 	await msg.reply_text(HELP_MESSAGE, reply_markup=reply_markup)
 
-async def get_my_balance_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	my_wallet.update_user_state()
+async def get_my_balance_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, pair=None):
+	if pair is None:
+		await get_pair(update, context, "get_my_balance")
+		return
+	pair.my_wallet.update_user_state()
 	msg = update.callback_query.message if update.callback_query else update.message
-	await msg.reply_text(my_wallet.asset)
+	await msg.reply_text(pair.my_wallet.asset)
 
-async def get_my_positions_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	my_wallet.update_user_state()
+async def get_my_positions_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, pair=None):
+	if pair is None:
+		await get_pair(update, context, "get_my_positions")
+		return
+	pair.my_wallet.update_user_state()
 	msg = update.callback_query.message if update.callback_query else update.message
-	await msg.reply_text(my_wallet.positions)
+	await msg.reply_text(pair.my_wallet.positions)
 
-async def get_target_positions_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-	target_wallet.update_user_state()
+async def get_target_positions_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, pair=None):
+	if pair is None:
+		await get_pair(update, context, "get_target_positions")
+		return
+	pair.target_wallet.update_user_state()
 	msg = update.callback_query.message if update.callback_query else update.message
-	await msg.reply_text(target_wallet.positions)
+	await msg.reply_text(pair.target_wallet.positions)
 
-async def set_target_address_handle(update: Update, context: CallbackContext, value=None):
+async def set_target_address_handle(update: Update, context: CallbackContext, value=None, pair=None):
+	if pair is None:
+		await get_pair(update, context, "get_my_balance")
+		return
 	if value is None:        
 		msg = update.callback_query.message if update.callback_query else update.message
 		await msg.reply_text("Please reply with the target address")
 		context.user_data['awaiting'] = 'set_target_address'
+		context.user_data['pair'] = pair
 		return
 	try:
-		print(f"old address: {target_wallet.address}")
+		print(f"old address: {pair.target_wallet.address}")
 		print(f"new address: {value}")
-		target_wallet.set_address(value)
+		pair.target_wallet.set_address(value)
 		message = f"Target Wallet Address set to {value}"
 		msg = update.callback_query.message if update.callback_query else update.message
 		await msg.reply_text(message)
@@ -121,27 +144,33 @@ async def set_target_address_handle(update: Update, context: CallbackContext, va
 		msg = update.callback_query.message if update.callback_query else update.message
 		await msg.reply_text("Invalid value. Usage: Reply with a number (e.g., 0.6)")
 
-async def switch_on_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, value=True):
-	await set_trade_mode(update, value)
+async def switch_on_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, pair=None, value=True):
+	if pair is None:
+		await get_pair(update, context, "switch_on")
+		return
+	await set_trade_mode(update, value, pair)
 
-async def switch_off_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, value=False):
-	await set_trade_mode(update, value)
+async def switch_off_handle(update: Update, context: ContextTypes.DEFAULT_TYPE, pair=None, value=False):
+	if pair is None:
+		await get_pair(update, context, "switch_off")
+		return
+	await set_trade_mode(update, value, pair)
 
-async def set_trade_mode(update, value=None):
+async def set_trade_mode(update, value, pair):
 	mod = "ON" if value else "OFF"
 	try:
-		my_wallet.set_mode(value)
-		message = f"Trade mode is {mod}"
+		pair.my_wallet.set_mode(value)
+		message = f"{pair.name} wallet trade mode is {mod}"
 		msg = update.callback_query.message if update.callback_query else update.message
 		await msg.reply_text(message)
 	except ValueError:
 		msg = update.callback_query.message if update.callback_query else update.message
-		await msg.reply_text(f"Failed to switch {mod} trade mode")
+		await msg.reply_text(f"Failed to switch {mod} {pair.name} walllet trade mode")
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	query = update.callback_query
 	await query.answer()
-	command = query.data
+	data = query.data
 
 	command_map = {
 		"help": help_handle,
@@ -152,9 +181,13 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
 		"switch_on": switch_on_handle,
 		"switch_off": switch_off_handle,
 	}
-
-	if command in command_map:
-		await command_map[command](update, context)
+	if "command" in context.user_data:
+		command = context.user_data.pop('command')
+		handler_func = command_map.get(command)
+		if handler_func:
+			await handler_func(update, context, pair=pairs_data[data])
+	elif data in command_map:
+		await command_map[data](update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 	if 'awaiting' in context.user_data:
@@ -163,7 +196,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 			"set_target_address": set_target_address_handle,
 		}
 		if command in command_map:
-			await command_map[command](update, context, value=update.message.text)
+			await command_map[command](update, context, context.user_data['pair'], value=update.message.text)
 
 def add_all_handlers():
 	application.add_handler(CommandHandler("start", start_handle))
@@ -187,12 +220,14 @@ async def keep_alive_silent():
 			print(f"Silent keep-alive error: {e}")
 
 async def start_bot():
+	global application
+	application = Application.builder().token(TELEGRAM_TOKEN).build()
 	add_all_handlers()
 	
 	print("Starting Telegram bot polling...")
 	await application.initialize()
 	await application.start()
-	await post_init(application)
+	await post_init()
 	
 	while True:
 		# Start Telegram Bot
@@ -202,6 +237,11 @@ async def start_bot():
 				drop_pending_updates=True,
 				poll_interval=1.0
 			)
+			# Save the real running loop
+			# bot_event_loop = asyncio.get_running_loop()
+
+			# Keep the async function alive forever
+			await asyncio.Event().wait()
 			# Start keep-alive task
 			asyncio.create_task(keep_alive_silent())
 			print("application started")
@@ -211,7 +251,19 @@ async def start_bot():
 			await send_telegram_message(message)
 			print(message)
 			await asyncio.sleep(5)
-	
+
+
+def start_telegram_bot_thread(pairs: dict):
+	global pairs_data
+	pairs_data = pairs
+
+	def start_thread_bot():
+		asyncio.run(start_bot())
+	thread = threading.Thread(target=start_thread_bot, daemon=True)
+	thread.start()
+	print("Telegram bot thread launched")
+	return thread
+
 	# add_all_handlers()
 	# print("Starting Telegram bot polling...")
 

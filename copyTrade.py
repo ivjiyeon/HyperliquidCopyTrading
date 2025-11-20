@@ -1,12 +1,17 @@
+import os
 import time
 import asyncio
 import threading
-from bot import send_telegram_message, start_bot
-from wallet import My_Wallet, Wallet, copy_pairs
+from bot import send_telegram_message, start_telegram_bot_thread
+from utils import load_config
+from wallet import My_Wallet, Wallet
 from typing import Dict, Any, List
 from notion import log_to_database
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+from dotenv import load_dotenv
+
+load_dotenv()
 
 POLL_INTERVAL = 2
 
@@ -16,9 +21,17 @@ class CopyTradingPair():
 		self.target_wallet = target_wallet
 		self.running = True
 		self.name = name
+		
+		notion = config.get("notion")
+		for database in notion:
+			if database['name'] == self.name:
+				self.db_id = os.getenv(database['db_id'])
 	
-	def start(self):
-		thread = threading.Thread(target=self.worker, daemon=True)
+	def start_thread_run(self):
+		asyncio.run(self.worker())
+
+	def start(self):		
+		thread = threading.Thread(target=self.start_thread_run, daemon=True)
 		thread.start()
 		return thread
 
@@ -26,7 +39,7 @@ class CopyTradingPair():
 		self.running = False
 			
 	async def worker(self):
-		# print(f"[{self.name}] Copy thread STARTED")
+		print(f"[{self.name}] Copy thread STARTED")
 		
 		last_timestamp = int(time.time()*1000)
 		my_timestamp = int(time.time()*1000)
@@ -39,6 +52,8 @@ class CopyTradingPair():
 			sz_decimals[asset_info["name"]] = asset_info["szDecimals"]
 		# max_decimals = 6  # change to 8 for spot
 		
+
+
 		while self.running:
 			try:
 				# Fetch new fills since last_timestamp
@@ -61,17 +76,20 @@ class CopyTradingPair():
 						continue
 									
 					if 'Close' in fill['dir'] and fill['coin'] not in self.my_wallet.positions.keys():
-						message = f"Target wallet {fill['dir']} {fill['coin']} position"
+						message = f"--------{self.name} Wallet Order Information--------\nTarget wallet {fill['dir']} {fill['coin']} position"
 						await send_telegram_message(message)
 						print(message)
 						last_timestamp = fill['time'] + 1
 						continue
 					
 					elif 'Close' in fill['dir'] and fill['coin'] in self.my_wallet.positions.keys():
-						user_size = self.my_wallet.positions[fill['coin']]
+						if self.target_wallet.positions[fill['coin']] > 0:
+							target_pct = float(fill['sz']) / (float(fill['sz']) + self.target_wallet.positions[fill['coin']])
+							user_size = round(target_pct * self.my_wallet.positions[fill['coin']], sz_decimals[fill['coin']])
+						else:
+							user_size = self.my_wallet.positions[fill['coin']]
 						is_buy = True if user_size < 0 else False
 						order_result = self.my_wallet.send_market_order(fill['coin'], is_buy, user_size)
-						# order_result = exchange.market_open(fill['coin'], is_buy, user_size, None, 0.01)
 						await self.send_message(order_result, fill['coin'], fill['dir'], user_size, fill['px'])
 
 					else:
@@ -92,6 +110,9 @@ class CopyTradingPair():
 				self.my_wallet.update_user_state()
 				my_fills = self.my_wallet.get_filled_history(my_timestamp)
 				print(f"my fills: \n{my_fills}")
+				if my_fills == None:
+					print("WHY")
+					continue
 				for fill in my_fills:
 					print(f"fill: \n{fill}")
 					coin = fill['coin']
@@ -108,7 +129,7 @@ class CopyTradingPair():
 						percentage_pnl = 0
 					fee = float(fill['fee'])
 					timestamp = int(fill['time'])
-					await log_to_database(coin, dir, price, size, pnl, percentage_pnl, fee, timestamp)
+					await log_to_database(self.db_id, coin, dir, price, size, pnl, percentage_pnl, fee, timestamp)
 					print(f"logged to notion at {timestamp}")
 
 				# Update last_timestamp
@@ -120,8 +141,8 @@ class CopyTradingPair():
 				break
 		print(f"[{self.name}] Copy thread STOPPED")
 		
-	async def send_message(order_result, coin, direction, size, price, leverage_value=0):
-		message = ""
+	async def send_message(self, order_result, coin, direction, size, price, leverage_value=0):
+		message = f"--------{self.name} Wallet Order Information--------\n"
 		if order_result['status'] == 'ok':
 			message += f"Market Order: {coin}\n"
 			# position = 'Long' if is_buy else 'Short'
@@ -137,15 +158,28 @@ class CopyTradingPair():
 		print(message)
 
 async def copy_trade():	
+	global config
+	config = load_config()
+	pairs = config.get("pairs")
+	copy_pairs: Dict[CopyTradingPair] = {}
+	for pair in pairs:
+		private_key = os.getenv(pair['private_key'])
+		pair = CopyTradingPair(
+			pair['name'], 
+			My_Wallet(pair['my_wallet'], private_key), 
+			Wallet(pair['target_wallet'])
+		)
+		copy_pairs[pair.name] = pair
+
 	# start telegram bot
-	await start_bot()
-
-
+	# await start_bot()
+	start_telegram_bot_thread(copy_pairs)
+	
 	threads=[]
-	for item in copy_pairs:
-		pair = CopyTradingPair(item.keys, item.values[0], item.values[1])
+	for pair in copy_pairs.values():
 		thread = pair.start()
 		threads.append(thread)
+	print("copy pairs created")
 		
 	for thread in threads:
 		thread.join()
