@@ -2,7 +2,7 @@ import time
 import asyncio
 import threading
 from bot import send_telegram_message, start_bot
-from wallet import My_Wallet, Wallet, COPY_PAIRS
+from wallet import My_Wallet, Wallet, copy_pairs
 from typing import Dict, Any, List
 from notion import log_to_database
 from hyperliquid.info import Info
@@ -11,7 +11,7 @@ from hyperliquid.utils import constants
 POLL_INTERVAL = 2
 
 class CopyTradingPair():
-	def __init__(self, my_wallet: My_Wallet, target_wallet: Wallet, name):
+	def __init__(self, name, my_wallet: My_Wallet, target_wallet: Wallet):
 		self.my_wallet = my_wallet
 		self.target_wallet = target_wallet
 		self.running = True
@@ -140,9 +140,10 @@ async def copy_trade():
 	# start telegram bot
 	await start_bot()
 
+
 	threads=[]
-	for item in COPY_PAIRS:
-		pair = CopyTradingPair(item[0], item[1], item[2])
+	for item in copy_pairs:
+		pair = CopyTradingPair(item.keys, item.values[0], item.values[1])
 		thread = pair.start()
 		threads.append(thread)
 		

@@ -1,7 +1,8 @@
 import time
 import os
 import threading
-from typing import Dict
+import yaml
+from typing import Dict, List
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
@@ -10,9 +11,9 @@ from eth_account.signers.local import LocalAccount
 from dotenv import load_dotenv
 
 load_dotenv()
-WALLET_ADDRESS_L = os.getenv("WALLET_ADDRESS_L")
-TARGET_ADDRESS = os.getenv("TARGET_ADDRESS")
-PRIVATE_KEY_L = os.getenv("PRIVATE_KEY_L")
+# WALLET_ADDRESS_L = os.getenv("WALLET_ADDRESS_L")
+# TARGET_ADDRESS = os.getenv("TARGET_ADDRESS")
+# PRIVATE_KEY_L = os.getenv("PRIVATE_KEY_L")
 IS_CROSS=True
 
 info = Info(constants.MAINNET_API_URL, skip_ws=False)
@@ -22,7 +23,6 @@ class Wallet:
 		self.address = address
 		self.positions: Dict[str, float] = {}
 		self._lock = threading.Lock()
-		self.mode = True
 
 		self.update_user_state()
 
@@ -65,6 +65,7 @@ class My_Wallet(Wallet):
 		super().__init__(address)
 		account: LocalAccount = Account.from_key(private_key)
 		self.exchange = Exchange(account, constants.MAINNET_API_URL)
+		self.mode = False
 	
 	def update_leverage(self, coin, leverage_value):
 		self.exchange.update_leverage(leverage_value, coin, is_cross=IS_CROSS)
@@ -82,12 +83,35 @@ class My_Wallet(Wallet):
 		with self._lock:
 			self.mode = mode
 		
-# global target_wallet, my_wallet
-target_wallet = Wallet(TARGET_ADDRESS)
-my_wallet = My_Wallet(WALLET_ADDRESS_L, PRIVATE_KEY_L)
+def load_config() -> Dict[str, Any]:
+    try:
+        with open("config.yaml", "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        print("config.yaml not found! Create it using the example above.")
+        exit(1)
+    except Exception as e:
+        print(f"Error reading config.yaml: {e}")
+        exit(1)
 
-COPY_PAIRS=[
-	(my_wallet, target_wallet, "LONG")
-]
 
-print(my_wallet.address)
+config = load_config()
+pairs = config.get("pairs")
+
+copy_pairs: Dict[List] = {}
+for pair in pairs:
+	private_key = os.getenv(pair['private_key'])
+	copy_pairs[pair['name']]= [
+		My_Wallet(pair['my_wallet'], private_key), 
+		Wallet(pair['target_wallet'])
+	]
+
+# # global target_wallet, my_wallet
+# target_wallet = Wallet(TARGET_ADDRESS)
+# my_wallet = My_Wallet(WALLET_ADDRESS_L, PRIVATE_KEY_L)
+
+# COPY_PAIRS=[
+# 	(my_wallet, target_wallet, "LONG")
+# ]
+
+# print(my_wallet.address)

@@ -1,0 +1,10 @@
+pairs:
+  - name: "long"
+    my_wallet: "0x18e8f449279db589c9B4E7cC51e7D090fCD38E74"
+    private_key: "PRIVATE_KEY_L"
+    target_wallet: "0xeb83e695adcac2e83f290d2d2815fc58e6491d7a"
+  - name: "short"
+    my_wallet: "0x18e8f449279db589c9B4E7cC51e7D090fCD38E74"
+    private_key: "PRIVATE_KEY_L"
+    target_wallet: "0xeb83e695adcac2e83f290d2d2815fc58e6491d7a"
+
