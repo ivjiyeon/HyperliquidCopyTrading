@@ -67,7 +67,7 @@ class CopyTradingPair():
 				print(f"new_fills: \n {new_fills}")
 				# await send_telegram_message("found new fill")
 				self.target_wallet.update_user_state()
-				self.my_wallet.update_user_state()
+				# self.my_wallet.update_user_state()
 				
 				for fill in new_fills:
 					print(f"fill: \n {fill}")
@@ -76,15 +76,15 @@ class CopyTradingPair():
 						continue
 									
 					if 'Close' in fill['dir'] and fill['coin'] not in self.my_wallet.positions.keys():
-						message = f"--------{self.name} Wallet Order Information--------\nTarget wallet {fill['dir']} {fill['coin']} position"
-						await send_telegram_message(message)
+						message = f"## {self.name} Wallet Order Information ##\nTarget wallet {fill['dir']} {fill['coin']} position"
+						send_telegram_message(message)
 						print(message)
 						last_timestamp = fill['time'] + 1
 						continue
 					
 					elif 'Close' in fill['dir'] and fill['coin'] in self.my_wallet.positions.keys():
-						if self.target_wallet.positions[fill['coin']] > 0:
-							target_pct = float(fill['sz']) / (float(fill['sz']) + self.target_wallet.positions[fill['coin']])
+						if fill['coin'] in self.target_wallet.positions.keys():
+							target_pct = abs(float(fill['sz']) / float(fill['startPosition']))
 							user_size = round(target_pct * self.my_wallet.positions[fill['coin']], sz_decimals[fill['coin']])
 						else:
 							user_size = self.my_wallet.positions[fill['coin']]
@@ -92,25 +92,27 @@ class CopyTradingPair():
 						order_result = self.my_wallet.send_market_order(fill['coin'], is_buy, user_size)
 						await self.send_message(order_result, fill['coin'], fill['dir'], user_size, fill['px'])
 
-					else:
-						_, leverage_value, _ = self.target_wallet.get_position_info(fill['coin'])
+					else:						
 						percentage_size = float(fill['sz']) / self.target_wallet.asset
 						user_size = round(percentage_size * float(self.my_wallet.asset), sz_decimals[fill['coin']])
 						is_buy = True if fill['side'] == 'B' else False
 						print(f"Target wallet used {percentage_size*100*float(fill['px'])}% of asset")
-						self.my_wallet.update_leverage(fill['coin'], leverage_value)
+						print(self.target_wallet.leverage)
+						self.my_wallet.update_leverage(fill['coin'], self.target_wallet.leverage[fill['coin']])
 						order_result = self.my_wallet.send_market_order(fill['coin'], is_buy, user_size)				
 						
-						await self.send_message(order_result, fill['coin'], fill['dir'], user_size, fill['px'], leverage_value)
+						await self.send_message(order_result, fill['coin'], fill['dir'], user_size, fill['px'], self.target_wallet.leverage[fill['coin']])
 
 				# Update last_timestamp
 				last_timestamp = max(f['time'] for f in new_fills) + 1
-
+				await asyncio.sleep(POLL_INTERVAL)
 				# Log to Notion
+				print(my_timestamp)
+				print(f"current time: {int(time.time())*1000}")
 				self.my_wallet.update_user_state()
 				my_fills = self.my_wallet.get_filled_history(my_timestamp)
 				print(f"my fills: \n{my_fills}")
-				if my_fills == None:
+				if my_fills == []:
 					print("WHY")
 					continue
 				for fill in my_fills:
@@ -121,31 +123,31 @@ class CopyTradingPair():
 					size = float(fill['sz'])
 					pnl = float(fill['closedPnl'])
 					if "Open" not in fill['dir']:
-						_, leverage_value, _ = self.my_wallet.get_position_info(fill['coin'])
+						# _, leverage_value, _ = self.my_wallet.get_position_info(fill['coin'])
 						# percentage_pnl = (fill['px'] - entry_price) / entry_price * leverage_value if fill['side'] == 'B' else (entry_price - fill['px']) / entry_price * leverage_value
 						# fee calculation excluded
-						percentage_pnl =  pnl / (self.my_wallet.asset - pnl) * 100 * leverage_value
+						percentage_pnl =  pnl / (self.my_wallet.asset - pnl) * 100 * self.my_wallet.leverage[fill['coin']]
 					else:
 						percentage_pnl = 0
 					fee = float(fill['fee'])
 					timestamp = int(fill['time'])
-					await log_to_database(self.db_id, coin, dir, price, size, pnl, percentage_pnl, fee, timestamp)
+					await log_to_database(self.db_id, coin, fill['dir'], dir, price, size, pnl, percentage_pnl, fee, timestamp)
 					print(f"logged to notion at {timestamp}")
 
 				# Update last_timestamp
 				my_timestamp = max(f['time'] for f in my_fills) + 1
+				print(f"after update my timestamp: {my_timestamp}")
 
 			except Exception as e:
 				print(f"Error in poll: {e}")
-				await send_telegram_message("Error found. Terminating the program")
+				send_telegram_message("Error found. Terminating the program")
 				break
 		print(f"[{self.name}] Copy thread STOPPED")
 		
 	async def send_message(self, order_result, coin, direction, size, price, leverage_value=0):
-		message = f"--------{self.name} Wallet Order Information--------\n"
+		message = f"## {self.name} Wallet Order Information ##\n"
 		if order_result['status'] == 'ok':
 			message += f"Market Order: {coin}\n"
-			# position = 'Long' if is_buy else 'Short'
 			message += f"Direction: {direction}\n"
 			if leverage_value != 0:
 				message += f"Leverage: {leverage_value}X\n"
@@ -154,7 +156,7 @@ class CopyTradingPair():
 			message += str(order_result['response'])
 		else:
 			message += f"Market order failed to {direction} {coin} position with size {size} on price {price}"
-		await send_telegram_message(message)
+		send_telegram_message(message)
 		print(message)
 
 async def copy_trade():	

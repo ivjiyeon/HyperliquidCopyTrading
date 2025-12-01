@@ -17,6 +17,7 @@ class Wallet:
 	def __init__(self, address):
 		self.address = address
 		self.positions: Dict[str, float] = {}
+		self.leverage: Dict[str, int] = {}
 		self._lock = threading.Lock()
 
 		self.update_user_state()
@@ -34,9 +35,8 @@ class Wallet:
 			self.positions.clear()
 			for pos in self.user_state.get('assetPositions', []):
 				coin = pos['position']['coin']
-				szi = float(pos['position']['szi'])
-				if szi > 0:
-					self.positions[coin] = szi
+				self.positions[coin] = float(pos['position']['szi'])
+				self.leverage[coin] = int(pos['position']['leverage']['value'])
 		
 	def get_filled_history(self, start_time):
 		with self._lock:

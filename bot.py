@@ -20,6 +20,7 @@ from telegram.ext import (
 	AIORateLimiter,
 	filters
 )
+from telegram.error import NetworkError, TimedOut
 # from telegram.constants import ParseMode, ChatAction
 from dotenv import load_dotenv
 
@@ -49,11 +50,11 @@ async def post_init():
 		# BotCommand("/send_msg", "Send Telegram Message")
 	])
 
-async def send_telegram_message(message):
+def send_telegram_message(message):
 	try:
-		await asyncio.run_coroutine_threadsafe(
+		asyncio.run_coroutine_threadsafe(
 			application.bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=message),
-			application.bot.loop
+			bot_event_loop
 		)
 	except Exception as e:
 		print(f"Error sending Telegram message: {e}")
@@ -198,6 +199,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 		if command in command_map:
 			await command_map[command](update, context, context.user_data['pair'], value=update.message.text)
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log errors and auto-restart polling on network issues"""
+    error = context.error
+    
+    if isinstance(error, (NetworkError, TimedOut)):
+        print(f"Network error (will auto-recover): {error}")
+        # Wait a bit then let PTB retry automatically
+        await asyncio.sleep(5)
+        return
+    
+    # For all other errors
+    print(f"Unhandled error: {error}")
+    if update:
+        try:
+            await update.effective_message.reply_text("Bot error — restarting...")
+        except:
+            pass
+
 def add_all_handlers():
 	application.add_handler(CommandHandler("start", start_handle))
 	application.add_handler(CommandHandler("help", help_handle))
@@ -210,17 +229,18 @@ def add_all_handlers():
 	# application.add_handler(CommandHandler("send_msg", send_msg_handle)) 
 	application.add_handler(CallbackQueryHandler(callback_query_handler))
 	application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+	application.add_error_handler(error_handler)
 	
 async def keep_alive_silent():
 	while True:
-		await asyncio.sleep(900)  # 15 minutes
+		await asyncio.sleep(600)  # 15 minutes
 		try:
 			await application.bot.get_me()  # Silent API call to keep connection alive
 		except Exception as e:
 			print(f"Silent keep-alive error: {e}")
 
 async def start_bot():
-	global application
+	global application, bot_event_loop
 	application = Application.builder().token(TELEGRAM_TOKEN).build()
 	add_all_handlers()
 	
@@ -235,10 +255,11 @@ async def start_bot():
 			await application.updater.start_polling(
 				timeout=30,
 				drop_pending_updates=True,
-				poll_interval=1.0
+				poll_interval=1.0,
+				bootstrap_retries=-1,
 			)
 			# Save the real running loop
-			# bot_event_loop = asyncio.get_running_loop()
+			bot_event_loop = asyncio.get_running_loop()
 
 			# Keep the async function alive forever
 			await asyncio.Event().wait()
@@ -248,7 +269,7 @@ async def start_bot():
 			break  # Exit retry loop if polling starts successfully
 		except Exception as e:
 			message = f"Polling error: {e}. Retrying in 5 seconds..."
-			await send_telegram_message(message)
+			send_telegram_message(message)
 			print(message)
 			await asyncio.sleep(5)
 
